@@ -1,0 +1,108 @@
+# Test fixture with PLACEHOLDER nodes.
+#
+# These are deliberately fake: the servers do not resolve and the UUIDs are
+# not real, so nothing here is a credential. It exists so the parser, engine
+# and UI tests can run without a real subscription.
+#
+# To run tests against your own nodes, set NODEPILOT_TEST_SUB:
+#   $env:NODEPILOT_TEST_SUB = "D:\path\to\config.yaml"   # or an https:// URL
+#   npm run test:ui
+
+mixed-port: 7890
+allow-lan: false
+mode: rule
+log-level: info
+dns:
+  enable: true
+  ipv6: false
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+
+proxies:
+  - name: '🇭🇰 香港 01'
+    type: vless
+    server: hk01.example.invalid
+    port: 443
+    uuid: 00000000-0000-4000-8000-000000000001
+    udp: true
+    tls: true
+    servername: www.example.com
+    client-fingerprint: chrome
+    network: tcp
+  - name: '🇭🇰 香港 02'
+    type: vless
+    server: hk02.example.invalid
+    port: 443
+    uuid: 00000000-0000-4000-8000-000000000002
+    udp: true
+    tls: true
+    servername: www.example.com
+    client-fingerprint: chrome
+    network: tcp
+  - name: '🇯🇵 日本 01'
+    type: trojan
+    server: jp01.example.invalid
+    port: 443
+    password: placeholder-password
+    udp: true
+    sni: www.example.com
+    skip-cert-verify: false
+  - name: '🇸🇬 新加坡 01'
+    type: vmess
+    server: sg01.example.invalid
+    port: 443
+    uuid: 00000000-0000-4000-8000-000000000004
+    alterId: 0
+    cipher: auto
+    udp: true
+    tls: true
+    servername: www.example.com
+    network: ws
+    ws-opts:
+      path: /placeholder
+  - name: '🇺🇸 美国 01'
+    type: ss
+    server: us01.example.invalid
+    port: 8388
+    cipher: aes-256-gcm
+    password: placeholder-password
+    udp: true
+  - name: '🇩🇪 德国 01'
+    type: hysteria2
+    server: de01.example.invalid
+    port: 443
+    password: placeholder-password
+    sni: www.example.com
+    skip-cert-verify: false
+
+proxy-groups:
+  - name: 🚀 节点选择
+    type: select
+    proxies:
+      - ♻️ 自动选择
+      - '🇭🇰 香港 01'
+      - '🇭🇰 香港 02'
+      - '🇯🇵 日本 01'
+      - '🇸🇬 新加坡 01'
+      - '🇺🇸 美国 01'
+      - '🇩🇪 德国 01'
+  - name: ♻️ 自动选择
+    type: url-test
+    proxies:
+      - '🇭🇰 香港 01'
+      - '🇭🇰 香港 02'
+      - '🇯🇵 日本 01'
+      - '🇸🇬 新加坡 01'
+      - '🇺🇸 美国 01'
+      - '🇩🇪 德国 01'
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+
+rules:
+  - 'DOMAIN-SUFFIX,example.com,🚀 节点选择'
+  - 'IP-CIDR,10.0.0.0/8,DIRECT,no-resolve'
+  - 'GEOIP,CN,DIRECT'
+  - 'MATCH,🚀 节点选择'

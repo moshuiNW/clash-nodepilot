@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>clash-nodepilot · 节点测速</title>
+<link rel="stylesheet" href="./styles.css" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>" />
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">⚡</span>
+    <div>
+      <h1>clash-nodepilot</h1>
+      <p class="tagline">Clash / Mihomo 节点测速与筛选</p>
+    </div>
+  </div>
+
+  <div class="topbar-right">
+    <div id="coreBadge" class="badge badge-muted" title="mihomo 内核状态">
+      <span class="dot"></span><span id="coreBadgeText">检测内核中…</span>
+    </div>
+    <button id="btnTheme" class="icon-btn" title="切换主题">🌗</button>
+    <button id="btnLogs" class="icon-btn" title="查看日志">📋</button>
+  </div>
+</header>
+
+<main class="layout">
+
+  <!-- ============ SOURCE ============ -->
+  <section class="card span-2">
+    <div class="card-head">
+      <h2>1 · 节点来源</h2>
+      <span class="hint">支持订阅链接与本地 Clash/Mihomo 配置文件</span>
+    </div>
+
+    <div class="row">
+      <input id="source" type="text" class="grow" spellcheck="false"
+             placeholder="https://example.com/api/v1/client/subscribe?token=...  或  D:\path\config.yaml" />
+      <button id="btnLoad" class="btn btn-primary">读取节点</button>
+    </div>
+
+    <div class="row wrap small-gap">
+      <label class="field">
+        <span>User-Agent</span>
+        <input id="userAgent" type="text" value="clash-verge/1.3.8" spellcheck="false" />
+      </label>
+      <label class="field" style="max-width:170px">
+        <span>只读取前 N 个节点 (0 = 全部)</span>
+        <input id="nodeLimit" type="number" min="0" value="0" title="测速会消耗真实流量，限制数量可省流量" />
+      </label>
+      <button id="btnClearSource" class="btn btn-ghost">清空</button>
+      <button id="btnPaste" class="btn btn-ghost">从剪贴板粘贴</button>
+    </div>
+
+    <p id="sourceMsg" class="msg"></p>
+  </section>
+
+  <!-- ============ SUMMARY ============ -->
+  <section class="stats" id="stats">
+    <div class="stat">
+      <span class="stat-label">节点总数</span>
+      <span class="stat-value" id="statTotal">–</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">可用节点</span>
+      <span class="stat-value ok" id="statUsable">–</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">最快节点</span>
+      <span class="stat-value" id="statBest">–</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">平均下载</span>
+      <span class="stat-value" id="statAvg">–</span>
+    </div>
+  </section>
+
+  <!-- ============ CONTROL ============ -->
+  <section class="card span-2">
+    <div class="card-head">
+      <h2>2 · 测速控制</h2>
+      <span class="hint" id="phaseHint">等待开始</span>
+    </div>
+
+    <div class="progress-wrap">
+      <div class="progress"><div class="progress-bar" id="progressBar"></div></div>
+      <div class="progress-meta">
+        <span id="progressText">0 / 0</span>
+        <span id="progressEta"></span>
+      </div>
+    </div>
+
+    <div class="row wrap small-gap">
+      <button id="btnStart" class="btn btn-primary" disabled>▶ 开始测速</button>
+      <button id="btnStop" class="btn btn-danger" disabled>■ 停止</button>
+      <div class="spacer"></div>
+      <button id="btnAdvanced" class="btn btn-ghost">⚙ 高级设置</button>
+    </div>
+
+    <div id="advanced" class="advanced hidden">
+      <div class="grid-3">
+        <label class="field">
+          <span>延迟测试轮数</span>
+          <input id="cfgLatencyRounds" type="number" min="1" max="10" value="4" />
+        </label>
+        <label class="field">
+          <span>延迟并发</span>
+          <input id="cfgLatencyConc" type="number" min="1" max="64" value="4" />
+        </label>
+        <label class="field">
+          <span>延迟超时 (ms)</span>
+          <input id="cfgLatencyTimeout" type="number" min="500" step="500" value="5000" />
+        </label>
+
+        <label class="field">
+          <span>下载并发</span>
+          <input id="cfgDlConc" type="number" min="1" max="32" value="4" />
+        </label>
+        <label class="field">
+          <span>单节点测速时长 (s)</span>
+          <input id="cfgDlDuration" type="number" min="2" max="60" value="6" />
+        </label>
+        <label class="field">
+          <span>仅测延迟高于此值跳过 (ms)</span>
+          <input id="cfgMaxLatency" type="number" min="0" step="50" value="0" />
+        </label>
+      </div>
+
+      <label class="field full">
+        <span>下载测速地址</span>
+        <input id="cfgDlUrl" type="text" spellcheck="false"
+               value="https://dl.google.com/chrome/mac/universal/stable/GGRO/googlechrome.dmg" />
+      </label>
+
+      <label class="check">
+        <input id="cfgDlFallback" type="checkbox" checked />
+        <span>地址失败时自动尝试备用测速源</span>
+      </label>
+
+      <div class="divider"></div>
+
+      <label class="check">
+        <input id="cfgUploadEnabled" type="checkbox" />
+        <span>启用上传测速（需可用的上传端点，会显著增加耗时）</span>
+      </label>
+      <div class="grid-3" id="uploadOpts" hidden>
+        <label class="field">
+          <span>上传地址</span>
+          <input id="cfgUploadUrl" type="text" spellcheck="false" value="https://speed.cloudflare.com/__up" />
+        </label>
+        <label class="field">
+          <span>上传数据量 (MB)</span>
+          <input id="cfgUploadBytes" type="number" min="1" max="64" value="10" />
+        </label>
+        <label class="field">
+          <span>上传超时 (s)</span>
+          <input id="cfgUploadDuration" type="number" min="2" max="60" value="5" />
+        </label>
+      </div>
+
+      <div class="divider"></div>
+
+      <label class="check">
+        <input id="cfgUnlockEnabled" type="checkbox" />
+        <span>启用流媒体解锁检测（ChatGPT / Netflix / Disney+ / 哔哩哔哩 等，会明显增加耗时）</span>
+      </label>
+      <div id="unlockOpts" hidden>
+        <p class="hint" style="margin:6px 0 8px">选择要检测的服务（不选 = 全部）：</p>
+        <div id="unlockServices" class="unlock-grid"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ RESULTS ============ -->
+  <section class="card span-2">
+    <div class="card-head">
+      <h2>3 · 测速结果</h2>
+      <span class="hint" id="resultHint">尚无数据</span>
+    </div>
+
+    <div class="row wrap small-gap">
+      <input id="search" type="search" class="grow" placeholder="🔍 搜索节点名称 / 地区 / 类型…" spellcheck="false" />
+      <select id="filterStatus" class="select">
+        <option value="all">全部状态</option>
+        <option value="usable">仅可用</option>
+        <option value="failed">仅失败</option>
+      </select>
+      <select id="filterSort" class="select">
+        <option value="download">按下载速度 ↓</option>
+        <option value="latency">按延迟 ↑</option>
+        <option value="jitter">按抖动 ↑</option>
+        <option value="loss">按丢包 ↑</option>
+        <option value="name">按名称</option>
+      </select>
+      <select id="filterUnlock" class="select" title="只看已解锁指定服务的节点">
+        <option value="">解锁：不限</option>
+      </select>
+    </div>
+
+    <div class="table-wrap">
+      <table class="results" id="table">
+        <thead>
+          <tr>
+            <th class="col-idx">#</th>
+            <th class="col-sel"><input type="checkbox" id="checkAll" title="全选/全不选" /></th>
+            <th data-sort="name" class="sortable col-name">节点名称</th>
+            <th data-sort="type" class="sortable col-type">类型</th>
+            <th data-sort="latency" class="sortable col-num">延迟</th>
+            <th data-sort="jitter" class="sortable col-num">抖动</th>
+            <th data-sort="loss" class="sortable col-num">丢包</th>
+            <th data-sort="download" class="sortable col-speed">下载速度</th>
+            <th class="col-unlock">解锁</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+      <div id="emptyState" class="empty">
+        <p>还没有测速结果</p>
+        <p class="dim">在上面填入订阅地址，点「读取节点」后开始测速</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ EXPORT ============ -->
+  <section class="card span-2">
+    <div class="card-head">
+      <h2>4 · 筛选与导出</h2>
+      <span class="hint">只有符合条件且可用的节点会被写入配置，不会覆盖成空文件</span>
+    </div>
+
+    <div class="grid-3">
+      <label class="field">
+        <span>最大延迟 (ms，0 = 不限)</span>
+        <input id="fMaxLatency" type="number" min="0" step="50" value="800" />
+      </label>
+      <label class="field">
+        <span>最小下载 (MB/s，0 = 不限)</span>
+        <input id="fMinDown" type="number" min="0" step="0.5" value="3" />
+      </label>
+      <label class="field">
+        <span>最大丢包 (%，100 = 不限)</span>
+        <input id="fMaxLoss" type="number" min="0" max="100" step="5" value="100" />
+      </label>
+      <label class="field">
+        <span>名称包含 (正则，可空)</span>
+        <input id="fInclude" type="text" spellcheck="false" placeholder="如 香港|HK" />
+      </label>
+      <label class="field">
+        <span>名称排除 (正则，可空)</span>
+        <input id="fExclude" type="text" spellcheck="false" placeholder="如 过期|试用|1x" />
+      </label>
+      <label class="field">
+        <span>策略组名称</span>
+        <input id="fGroupName" type="text" value="🚀 节点选择" />
+      </label>
+      <label class="field">
+        <span>必须解锁的服务（可多选）</span>
+        <select id="fUnlockRequired" class="select" multiple size="1" title="按住 Ctrl 可多选">
+        </select>
+      </label>
+    </div>
+
+    <div class="row wrap small-gap">
+      <label class="check"><input id="fOnlyWorking" type="checkbox" checked /><span>仅保留可用节点</span></label>
+      <label class="check"><input id="fRename" type="checkbox" checked /><span>按地区与速度重命名</span></label>
+      <label class="check"><input id="fAutoGroups" type="checkbox" checked /><span>生成自动选择/故障转移组</span></label>
+      <label class="check"><input id="fKeepRules" type="checkbox" checked /><span>保留原配置规则</span></label>
+      <label class="check"><input id="fUseSelected" type="checkbox" /><span>仅导出表格中勾选的节点</span></label>
+    </div>
+
+    <div class="row wrap small-gap">
+      <button id="btnPreview" class="btn">👁 预览配置</button>
+      <button id="btnSave" class="btn btn-primary">💾 保存到文件</button>
+      <button id="btnDownload" class="btn">⬇ 下载 YAML</button>
+      <div class="spacer"></div>
+      <span id="matchCount" class="match-count">符合条件：0 个</span>
+    </div>
+
+    <p id="exportMsg" class="msg"></p>
+
+    <pre id="preview" class="preview hidden"></pre>
+  </section>
+
+</main>
+
+<!-- ============ LOG DRAWER ============ -->
+<aside id="logDrawer" class="drawer hidden">
+  <div class="drawer-head">
+    <h3>运行日志</h3>
+    <div>
+      <button id="btnClearLogs" class="icon-btn" title="清空">🗑</button>
+      <button id="btnCloseLogs" class="icon-btn" title="关闭">✕</button>
+    </div>
+  </div>
+  <pre id="logBody" class="log-body"></pre>
+</aside>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="./app.js" type="module"></script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+{
+  "name": "clash-nodepilot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Clash/Mihomo 节点测速与筛选工具 — 本地 Web UI",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "dev": "node src/server.mjs --open",
+    "test": "node tests/ruletest.test.mjs && node tests/safety.test.mjs && node tests/validate.test.mjs",
+    "test:ui": "node tests/uitest.test.mjs && node tests/unlock-ui.test.mjs && node tests/unlock-chips.test.mjs",
+    "test:all": "npm test && npm run test:ui"
+  },
+  "dependencies": {
+    "js-yaml": "^4.3.2"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.0"
+  }
+}

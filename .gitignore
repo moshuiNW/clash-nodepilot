@@ -1,0 +1,25 @@
+# dependencies
+node_modules/
+
+# local scratch / test output
+_scratch/
+*.log
+shots/
+tests/_exporttest/
+
+# Local subscription / config files that may contain real credentials.
+# Never commit these: a subscription URL is effectively a password.
+config.yaml
+config.yml
+sub*.yaml
+sub*.yml
+result.yaml
+*subscription*.yaml
+*.local.yaml
+!tests/fixtures/sample-subscription.yaml
+
+# editor / OS
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
