@@ -281,6 +281,18 @@ async function handleApi(req, res, url) {
     return json(res, 200, { stopped: false });
   }
 
+  // --- shutdown: close the UI and stop the core process ---
+  // Closing the browser tab alone leaves the node process and the mihomo core
+  // running, so expose an explicit way to shut everything down.
+  if (p === '/shutdown' && method === 'POST') {
+    pushLog('收到关闭请求，正在退出…');
+    broadcast('shutdown', { reason: 'user' });
+    json(res, 200, { shuttingDown: true });
+    // Let the response flush before tearing down the listener.
+    setTimeout(() => { void shutdownGracefully('api'); }, 250);
+    return undefined;
+  }
+
   if (p === '/results' && method === 'GET') {
     const snap = summarizeResults();
     const filters = Object.fromEntries(url.searchParams.entries());
@@ -563,6 +575,35 @@ export async function startServer(opts = {}) {
   return { url, port: actual, server };
 }
 
+/**
+ * Stop the speed test, kill the mihomo core and close the HTTP server.
+ * Safe to call more than once.
+ */
+let shuttingDown = false;
+async function shutdownGracefully(reason = 'signal') {
+  if (shuttingDown) return;
+  shuttingDown = true;
+
+  console.log(`\n正在关闭 (${reason})...`);
+  try { state.engine?.stop(); } catch { /* ignore */ }
+
+  // Always kill the core: it is a child process that would otherwise linger.
+  try {
+    if (state.core) await state.core.stop();
+    console.log('  已停止 mihomo 内核');
+  } catch (err) {
+    console.log(`  停止内核时出错: ${err.message}`);
+  }
+
+  await new Promise((resolve) => {
+    server.close(() => resolve());
+    setTimeout(resolve, 1200);
+  });
+
+  console.log('  已退出');
+  process.exit(0);
+}
+
 // Run directly: `node src/server.mjs`
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
 if (isMain) {
@@ -573,7 +614,7 @@ if (isMain) {
       console.log('  ⚡ clash-nodepilot 已启动');
       console.log(`  ➜  ${url}`);
       console.log('');
-      console.log('  按 Ctrl+C 退出');
+      console.log('  结束运行：点界面右上角「⏻ 关闭」，或在此终端按 Ctrl+C');
       console.log('');
       if (wantOpen) openBrowser(url);
     })
@@ -582,12 +623,12 @@ if (isMain) {
       process.exit(1);
     });
 
-  const shutdown = async () => {
-    console.log('\n正在关闭...');
-    try { await state.core?.stop(); } catch { /* ignore */ }
-    server.close(() => process.exit(0));
-    setTimeout(() => process.exit(0), 1500);
-  };
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', () => void shutdownGracefully('Ctrl+C'));
+  process.on('SIGTERM', () => void shutdownGracefully('SIGTERM'));
+
+  // If the parent shell dies unexpectedly, do not leave the core orphaned.
+  process.on('uncaughtException', (err) => {
+    console.error('未捕获异常:', err);
+    void shutdownGracefully('uncaughtException');
+  });
 }

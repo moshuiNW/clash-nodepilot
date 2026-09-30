@@ -18,6 +18,8 @@ const state = {
   busy: false,
   nodeCount: 0,
   uploadEnabled: false,
+  unlockServices: [],
+  shuttingDown: false,
 };
 
 // ---------------- formatting ----------------
@@ -512,8 +514,16 @@ function connectEvents() {
     appendLog(line);
   });
 
+  es.addEventListener('shutdown', () => {
+    // Another tab (or the API) initiated shutdown: show the farewell screen.
+    showFarewell();
+  });
+
   es.onerror = () => {
-    // EventSource auto-reconnects; nothing to do.
+    // EventSource auto-reconnects. If the server has gone away for good the
+    // page will keep showing stale state, so make it discoverable: surface it
+    // only when a shutdown was already requested.
+    if (state.shuttingDown) showFarewell();
   };
 }
 
@@ -773,12 +783,44 @@ function init() {
   $('btnCloseLogs').addEventListener('click', () => $('logDrawer').classList.add('hidden'));
   $('btnClearLogs').addEventListener('click', () => { $('logBody').textContent = ''; });
 
+  // shutdown
+  $('btnQuit').addEventListener('click', () => $('quitMask').classList.remove('hidden'));
+  $('btnQuitCancel').addEventListener('click', () => $('quitMask').classList.add('hidden'));
+  $('quitMask').addEventListener('click', (e) => {
+    if (e.target === $('quitMask')) $('quitMask').classList.add('hidden');
+  });
+  $('btnQuitConfirm').addEventListener('click', async () => {
+    $('quitMask').classList.add('hidden');
+    state.shuttingDown = true;
+    try {
+      await api('/shutdown', { method: 'POST' });
+    } catch {
+      // The server may close the socket before the response is read.
+    }
+    showFarewell();
+  });
+
   refreshStatus();
   connectEvents();
   loadUnlockServices();
   updateButtons();
 
   setInterval(() => { if (state.testing) renderStats(); }, 1000);
+}
+
+/** Replace the page with a clear "it is now stopped" message. */
+function showFarewell() {
+  document.body.innerHTML = `
+    <div style="display:grid;place-items:center;height:100vh;text-align:center;padding:24px">
+      <div>
+        <div style="font-size:44px;margin-bottom:14px">⏻</div>
+        <h2 style="margin:0 0 8px;font-size:18px">已结束运行</h2>
+        <p style="color:#97a3bd;font-size:13.5px;line-height:1.7;margin:0">
+          后台的 node 进程与 mihomo 内核已停止，可以关闭此标签页。<br>
+          需要再次使用，请双击项目目录下的 <code>启动.cmd</code>。
+        </p>
+      </div>
+    </div>`;
 }
 
 document.addEventListener('DOMContentLoaded', init);

@@ -24,8 +24,22 @@
     </div>
     <button id="btnTheme" class="icon-btn" title="切换主题">🌗</button>
     <button id="btnLogs" class="icon-btn" title="查看日志">📋</button>
+    <button id="btnQuit" class="icon-btn icon-btn-quit" title="停止测速并退出（关闭后台的 node 与 mihomo 内核）">⏻</button>
   </div>
 </header>
+
+<!-- shutdown confirmation -->
+<div id="quitMask" class="modal-mask hidden">
+  <div class="modal">
+    <h3>结束运行？</h3>
+    <p>将停止正在进行的测速，关闭后台的 node 进程与 mihomo 内核。之后网页将无法访问，需要重新双击 <code>启动.cmd</code> 才能再用。</p>
+    <p class="modal-note">只是想暂时不用？直接关闭本网页标签即可 —— 后台进程会继续运行，重新打开 http://127.0.0.1:8765 就能继续用。</p>
+    <div class="modal-actions">
+      <button id="btnQuitCancel" class="btn">取消</button>
+      <button id="btnQuitConfirm" class="btn btn-danger">确认退出</button>
+    </div>
+  </div>
+</div>
 
 <main class="layout">
 

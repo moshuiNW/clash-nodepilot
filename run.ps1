@@ -22,7 +22,10 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
 
 if (-not (Test-Path 'node_modules\js-yaml')) {
     Write-Host '首次运行，正在安装依赖...' -ForegroundColor Yellow
-    npm install --omit=dev --no-audit --no-fund
+    # Install only the single runtime dependency. A bare `npm install` here
+    # would also remove devDependencies (e.g. playwright), breaking the tests;
+    # `--no-save` likewise keeps package.json untouched.
+    npm install js-yaml --no-save --no-audit --no-fund
 }
 
 $env:NODEPILOT_PORT = $Port

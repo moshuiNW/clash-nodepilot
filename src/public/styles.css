@@ -134,6 +134,50 @@ body::before {
 }
 .icon-btn:hover { color: var(--text); border-color: var(--border-strong); background: var(--panel-solid); }
 
+.icon-btn-quit:hover {
+  color: var(--bad);
+  border-color: rgba(255, 107, 129, 0.5);
+  background: rgba(255, 107, 129, 0.12);
+}
+
+/* ---------------- modal ---------------- */
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 8, 18, 0.6);
+  backdrop-filter: blur(3px);
+  display: grid;
+  place-items: center;
+  z-index: 200;
+  padding: 20px;
+}
+
+.modal {
+  width: min(470px, 94vw);
+  background: var(--panel-solid);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 20px;
+  box-shadow: var(--shadow);
+}
+.modal h3 { margin: 0 0 10px; font-size: 15px; }
+.modal p { margin: 0 0 10px; font-size: 13px; color: var(--text-dim); line-height: 1.6; }
+.modal-note {
+  padding: 9px 11px;
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  font-size: 12.5px !important;
+}
+.modal code {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(128, 140, 170, 0.18);
+}
+.modal-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 6px; }
+
 /* ---------------- layout ---------------- */
 .layout {
   position: relative;
