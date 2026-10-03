@@ -21,12 +21,17 @@ function listProcesses() {
   const workDir = path.join(defaultBaseDir(), 'core');
 
   if (IS_WIN) {
+    // Match any mihomo/clash core name, not just Clash Verge's `verge-mihomo.exe`:
+    // CI and manual installs use plain `mihomo.exe`, and a name-specific filter
+    // made "运行时拉起了 mihomo 内核" fail on every such machine.
+    const names = ['mihomo.exe', 'verge-mihomo.exe', 'verge-mihomo-alpha.exe', 'clash-meta.exe', 'clash.exe'];
+    const nameFilter = names.map((n) => `Name='${n}'`).join(' OR ');
     const ps = `
       $out = @()
       Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object {
         $_.CommandLine -like '*server.mjs*' -and $_.CommandLine -notlike '*subprocess-local*' -and $_.CommandLine -notlike '*runner.js*'
       } | ForEach-Object { $out += "node:$($_.ProcessId)" }
-      Get-CimInstance Win32_Process -Filter "Name='verge-mihomo.exe'" | Where-Object {
+      Get-CimInstance Win32_Process -Filter "${nameFilter}" | Where-Object {
         $_.CommandLine -like '*nodepilot*'
       } | ForEach-Object { $out += "core:$($_.ProcessId)" }
       $out -join ','

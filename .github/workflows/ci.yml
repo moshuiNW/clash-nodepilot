@@ -59,10 +59,12 @@ jobs:
           $url = 'https://github.com/MetaCubeX/mihomo/releases/download/v1.19.32/mihomo-windows-amd64-compatible-v1.19.32.zip'
           Invoke-WebRequest -Uri $url -OutFile mihomo.zip
           Expand-Archive -Path mihomo.zip -DestinationPath . -Force
-          # The release zip contains the binary already named mihomo.exe.
-          Get-ChildItem -Recurse -Filter 'mihomo*.exe' | Select-Object -First 1 | ForEach-Object {
-            Copy-Item $_.FullName -Destination 'mihomo.exe' -Force
-          }
+          # Verified contents of this asset: a single file named
+          # 'mihomo-windows-amd64-compatible.exe'. Normalise it to mihomo.exe,
+          # which is the name the core finder looks for.
+          $exe = Get-ChildItem -Recurse -Filter 'mihomo*.exe' | Select-Object -First 1
+          if (-not $exe) { throw 'mihomo.exe not found in the release zip' }
+          Copy-Item $exe.FullName -Destination 'mihomo.exe' -Force
           .\mihomo.exe -v
 
       - name: Run backend tests
