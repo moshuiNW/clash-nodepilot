@@ -8,7 +8,7 @@ import os from 'node:os';
 import { spawn, execFileSync } from 'node:child_process';
 import { findCore, verifyCore, verifyCoreDetailed } from './core/core-finder.mjs';
 import { CoreManager } from './core/core-manager.mjs';
-import { writePidFile, removePidFile, defaultBaseDir } from './core/proc.mjs';
+import { writePidFile, clearPidFile, defaultBaseDir } from './core/proc.mjs';
 import { loadProxies, SubscriptionError } from './core/subscription.mjs';
 import { SpeedTestEngine, DEFAULT_CONFIG, applyFilters } from './core/engine.mjs';
 import { UNLOCK_SERVICES } from './core/unlock.mjs';
@@ -665,7 +665,8 @@ export async function startServer(opts = {}) {
     });
   } catch (err) {
     // Do not leave a PID file pointing at an instance that never came up.
-    removePidFile(baseDir);
+    // Scoped to our own pid so a concurrently running instance keeps its record.
+    clearPidFile(baseDir, { serverPid: process.pid });
     throw err;
   }
 
@@ -703,7 +704,9 @@ async function shutdownGracefully(reason = 'signal') {
     setTimeout(resolve, 1200);
   });
 
-  removePidFile(defaultBaseDir());
+  // Clear our own fields only. Another instance may share this file (the tests
+  // do exactly that), and its record must outlive our shutdown.
+  clearPidFile(defaultBaseDir(), { serverPid: process.pid });
   console.log('  已退出');
   process.exit(0);
 }

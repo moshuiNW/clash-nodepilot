@@ -48,6 +48,65 @@ export function writePidFile(baseDir, patch) {
   }
 }
 
+/**
+ * Clear the PID file, but only for the fields this process actually owns.
+ *
+ * Two callers share one record: the server owns `serverPid`/`port`/`host`/`url`,
+ * and the core owns `corePid`/`workDir`. Two failure modes follow from ignoring
+ * that, and both were observed on CI:
+ *
+ *  - an unconditional `rm` from either side destroys the other's half. A test
+ *    helper that started a server on the shared default port removed the record
+ *    a *different, still-running* instance had just written, so that instance
+ *    appeared to have recorded no core at all;
+ *  - two concurrent instances share the path, so the one exiting later can
+ *    erase the other's live record entirely.
+ *
+ * Ownership is checked against the recorded value: a process only ever clears
+ * fields whose value is its own pid. Anything not ours is left untouched, and
+ * the file is deleted only once no live owner remains recorded.
+ *
+ * @param {string} baseDir
+ * @param {object} opts
+ * @param {number} [opts.serverPid] clear server fields, but only if they are ours
+ * @param {number} [opts.corePid]   clear core fields, but only if they are ours
+ */
+export function clearPidFile(baseDir, { serverPid, corePid } = {}) {
+  const file = pidFilePath(baseDir);
+  try {
+    const cur = readPidFile(baseDir);
+    if (!cur) return;
+
+    if (serverPid !== undefined && cur.serverPid === serverPid) {
+      delete cur.serverPid;
+      delete cur.port;
+      delete cur.host;
+      delete cur.url;
+      delete cur.platform;
+    }
+    if (corePid !== undefined && cur.corePid === corePid) {
+      delete cur.corePid;
+      delete cur.workDir;
+    }
+
+    // Keep the file while any owner is still recorded, otherwise drop it.
+    if (cur.serverPid === undefined && cur.corePid === undefined) {
+      fsSync.rmSync(file, { force: true });
+      return;
+    }
+    fsSync.writeFileSync(file, JSON.stringify(cur, null, 1), 'utf8');
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Delete the PID file outright.
+ *
+ * Only for deliberate, whole-instance teardown paths (an explicit stop that has
+ * already ensured nothing else is running). Prefer clearPidFile() in normal
+ * shutdown, so a concurrently running instance does not lose its record.
+ */
 export function removePidFile(baseDir) {
   try {
     fsSync.rmSync(pidFilePath(baseDir), { force: true });

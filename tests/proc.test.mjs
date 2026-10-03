@@ -17,6 +17,7 @@ import {
   writePidFile,
   readPidFile,
   removePidFile,
+  clearPidFile,
   pidFilePath,
   defaultBaseDir,
 } from '../src/core/proc.mjs';
@@ -55,6 +56,40 @@ const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'np-proc-'));
   check('removePidFile 之后读不到', readPidFile(tmpBase) === null);
   check('pidFilePath 指向 nodepilot.pid',
     path.basename(pidFilePath(tmpBase)) === 'nodepilot.pid', pidFilePath(tmpBase));
+}
+
+// --- Ownership-checked clearing. This pins the bug that made CI fail: a server
+//     exiting must not erase the core fields recorded by another live instance. ---
+{
+  const b = fs.mkdtempSync(path.join(os.tmpdir(), 'np-own-'));
+  writePidFile(b, { serverPid: 111, port: 8765, host: '127.0.0.1' });
+  writePidFile(b, { corePid: 222, workDir: '/w/core' });
+
+  // A *different* server (pid 999) shutting down must not touch our record.
+  clearPidFile(b, { serverPid: 999 });
+  let d = readPidFile(b);
+  check('他人 serverPid 退出不影响记录', d?.serverPid === 111 && d?.corePid === 222, JSON.stringify(d));
+
+  // A *different* core shutting down must likewise be ignored.
+  clearPidFile(b, { corePid: 999 });
+  d = readPidFile(b);
+  check('他人 corePid 退出不影响记录', d?.serverPid === 111 && d?.corePid === 222, JSON.stringify(d));
+
+  // The real owner clearing its own fields leaves the other half intact.
+  clearPidFile(b, { serverPid: 111 });
+  d = readPidFile(b);
+  check('自有 serverPid 退出后保留 core 记录',
+    d?.serverPid === undefined && d?.corePid === 222 && d?.port === undefined, JSON.stringify(d));
+
+  // Once no owner is recorded the file is dropped.
+  clearPidFile(b, { corePid: 222 });
+  check('所有属主清空后删除文件', readPidFile(b) === null);
+
+  // Clearing a missing file is a no-op, not a throw.
+  let threw = false;
+  try { clearPidFile(b, { serverPid: 1 }); } catch { threw = true; }
+  check('对不存在的 PID 文件清理不抛错', !threw);
+  fs.rmSync(b, { recursive: true, force: true });
 }
 
 // --- 损坏的 PID 文件不应导致崩溃 ---

@@ -7,7 +7,7 @@ import net from 'node:net';
 import { spawn, execFile } from 'node:child_process';
 import yaml from 'js-yaml';
 import { sleep } from './util.mjs';
-import { writePidFile, removePidFile } from './proc.mjs';
+import { writePidFile, clearPidFile } from './proc.mjs';
 
 const isWin = process.platform === 'win32';
 
@@ -72,6 +72,8 @@ export class CoreManager {
     this.apiPort = null;
     this.mixedPort = null;
     this.started = false;
+    /** Pid of the most recently spawned core, for ownership-checked cleanup. */
+    this.lastCorePid = undefined;
   }
 
   log(line) {
@@ -168,6 +170,7 @@ export class CoreManager {
     // pid can never lead to killing an unrelated process (e.g. the user's own
     // Clash Verge core).
     if (this.proc.pid) {
+      this.lastCorePid = this.proc.pid;
       writePidFile(this.baseDir, { corePid: this.proc.pid, workDir: this.workDir });
     }
 
@@ -283,15 +286,16 @@ export class CoreManager {
 
   async stop() {
     if (!this.proc) {
-      removePidFile(this.baseDir);
+      clearPidFile(this.baseDir, { corePid: this.lastCorePid });
       return;
     }
     const proc = this.proc;
+    const pid = proc.pid;
     this.proc = null;
     try {
       if (isWin) {
         await new Promise((resolve) => {
-          execFile('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { windowsHide: true }, () => resolve());
+          execFile('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true }, () => resolve());
         });
       } else {
         proc.kill('SIGTERM');
@@ -302,6 +306,9 @@ export class CoreManager {
       try { proc.kill('SIGKILL'); } catch { /* ignore */ }
     }
     this.started = false;
-    removePidFile(this.baseDir);
+    // Clear only our own fields: another instance may be recorded in the same
+    // file, and its record must survive this one shutting down.
+    clearPidFile(this.baseDir, { corePid: pid });
+    this.lastCorePid = undefined;
   }
 }
