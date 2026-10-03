@@ -83,22 +83,43 @@ const child = spawn(process.execPath, ['src/server.mjs'], {
   windowsHide: true,
 });
 
-// Wait for the HTTP API.
+// Wait until OUR child is the one answering on this port.
+//
+// Polling /api/status alone is not enough: a stale server left on this port by
+// an earlier run answers just as happily, and the test would then read that
+// instance's PID file instead of ours (which is exactly how this failed on CI
+// while passing locally). Require the PID file to name our child before
+// treating the server as up.
 let up = false;
-for (let i = 0; i < 40; i++) {
-  try {
-    const r = await fetch(`http://127.0.0.1:${PORT}/api/status`);
-    if (r.ok) { up = true; break; }
-  } catch { /* not yet */ }
-  await sleep(500);
+let pidData = null;
+const deadline = Date.now() + 30000;
+while (Date.now() < deadline) {
+  // The PID file is now written before listen, so if it names our child the
+  // server is either up already or about to be.
+  const rec = readPidFile(defaultBaseDir());
+  if (rec && rec.serverPid === child.pid) {
+    try {
+      const r = await fetch(`http://127.0.0.1:${PORT}/api/status`);
+      if (r.ok) { up = true; pidData = rec; break; }
+    } catch { /* not accepting yet */ }
+  }
+  if (child.exitCode !== null) break;
+  await sleep(250);
 }
+
 check('服务已启动', up);
-if (!up) { child.kill(); process.exit(1); }
+if (!up) {
+  console.log('  PID 文件:', JSON.stringify(readPidFile(defaultBaseDir())));
+  console.log('  child pid:', child.pid, 'exitCode:', child.exitCode);
+  child.kill();
+  process.exit(1);
+}
 
 // The PID file must be written once the server is listening.
-const pidData = readPidFile(defaultBaseDir());
 check('启动了 PID 文件记录', !!pidData && Number.isInteger(pidData.serverPid), JSON.stringify(pidData));
 check('PID 文件记录了端口', pidData?.port === PORT, `port=${pidData?.port}`);
+check('PID 文件记录的是本测试启动的进程', pidData?.serverPid === child.pid,
+  `file=${pidData?.serverPid} child=${child.pid}`);
 
 // Load the placeholder fixture so a real core process is spawned.
 const fixture = path.join(ROOT, 'tests', 'fixtures', 'sample-subscription.yaml');

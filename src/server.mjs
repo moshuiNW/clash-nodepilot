@@ -637,41 +637,45 @@ export async function startServer(opts = {}) {
     state.coreError = err.message;
   }
 
-  // Write the PID file *inside* the listen callback, before resolving.
+  // Record the PID file BEFORE listening.
   //
-  // The server starts accepting connections as soon as listen succeeds, so
-  // writing this after an `await` left a window where a client could already
-  // get an HTTP response while the PID file did not exist yet. Tests read the
-  // file right after polling /api/status and intermittently saw null on loaded
-  // CI runners, where the event loop delay widens that window; on a fast local
-  // machine it never showed up. Recording it before any request can be served
-  // removes the race entirely.
-  let recorded = null;
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(port, host, () => {
-      const boundPort = server.address().port;
-      const boundUrl = `http://${host}:${boundPort}`;
-
-      // Record how to find this instance again after the browser tab is closed,
-      // so stop.sh can shut it down cooperatively instead of scanning for
-      // processes. Failing to write it is not fatal to serving requests.
-      try {
-        writePidFile(defaultBaseDir(), {
-          serverPid: process.pid,
-          port: boundPort,
-          host,
-          url: boundUrl,
-          platform: process.platform,
-        });
-      } catch { /* non-fatal */ }
-
-      recorded = { port: boundPort, url: boundUrl };
-      resolve();
-    });
+  // `server.listen()` begins accepting connections at the syscall, which can
+  // precede the 'listening' callback that resolves this promise. Writing the
+  // file there still left a (small) window in which a client could be served
+  // while the record did not exist yet; a test polling /api/status right after
+  // startup read null on loaded CI runners. Writing it before the socket is
+  // bound removes the ordering question entirely.
+  //
+  // The port is always concrete here (defaults to 8765, never 0), so it can be
+  // recorded up front. If the bind later fails we drop the record again.
+  const baseDir = defaultBaseDir();
+  writePidFile(baseDir, {
+    serverPid: process.pid,
+    port,
+    host,
+    url: `http://${host}:${port}`,
+    platform: process.platform,
   });
 
-  return { url: recorded.url, port: recorded.port, server };
+  let actual;
+  try {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(port, host, resolve);
+    });
+  } catch (err) {
+    // Do not leave a PID file pointing at an instance that never came up.
+    removePidFile(baseDir);
+    throw err;
+  }
+
+  actual = server.address().port;
+  if (actual !== port) {
+    // Only possible for dynamic ports; keep the record truthful.
+    writePidFile(baseDir, { port: actual, url: `http://${host}:${actual}` });
+  }
+
+  return { url: `http://${host}:${actual}`, port: actual, server };
 }
 
 /**
