@@ -4,21 +4,23 @@ Clash / Mihomo 节点测速与筛选工具。**本地网页界面**，实时进�
 
 替代 `clash-speedtest`，重点解决它的几个痛点：界面是终端表格、订阅拉取失败会写空结果覆盖好文件、测试过程黑盒不可控。
 
+## 平台支持
+
+| 平台 | 状态 | 启动 | 停止 |
+|------|------|------|------|
+| **Windows** | ✅ 正式支持 | `启动.cmd` / `run.ps1` | `停止.cmd` / `停止.ps1` |
+| **Linux** | ✅ 正式支持 | `./start.sh` | `./stop.sh` |
+| macOS | ⚠️ 未测试（代码路径保留，欢迎社区验证） | `node src/server.mjs --open` | `npm run stop` |
+
+CI 在 `ubuntu-latest` 与 `windows-latest` 上跑后端测试；macOS 没有 CI 覆盖，故不作承诺。
+
 ---
 
 ## 快速开始
 
+### Windows
+
 双击 **`启动.cmd`**（或运行 `run.ps1`），浏览器会自动打开 `http://127.0.0.1:8765`。
-
-然后在页面里：
-
-1. 粘贴订阅链接或本地配置路径 → 点 **读取节点**
-2. 点 **开始测速**
-3. 设置筛选条件 → **预览配置** / **保存到文件** / **下载 YAML**
-
-> 首次运行会自动安装依赖（只装一个运行时依赖 `js-yaml`，且**不会**动 `node_modules` 里的其他包）。
-
-### 命令行方式
 
 ```powershell
 node src\server.mjs              # 启动服务
@@ -26,6 +28,34 @@ node src\server.mjs --open       # 启动并打开浏览器
 .\run.ps1 -Port 9000             # 指定端口
 .\run.ps1 -CorePath "D:\mihomo\mihomo.exe"   # 指定内核
 ```
+
+### Linux
+
+```bash
+./start.sh                   # 启动并自动打开浏览器
+./start.sh --no-open         # 仅启动服务
+./start.sh --port 9000       # 指定端口
+./start.sh --core /usr/bin/mihomo   # 指定内核
+```
+
+首次运行会自动安装依赖（只装一个运行时依赖 `js-yaml`，且**不会**动 `node_modules` 里的其他包）。
+
+> 需要 Node.js 18+。若端口被占用，`start.sh` 会直接提示改用 `NODEPILOT_PORT=9000 ./start.sh`。
+
+**Linux 上内核从哪来？** 本工具不下载任何内核，只探测本机已有的 mihomo：
+
+- Fedora / RHEL：`sudo dnf install clash-meta`（会装到 `/usr/bin/mihomo`）
+- Arch / AUR：`mihomo`、`mihomo-bin` 等包
+- Clash Verge Rev：其 `.deb` / `.rpm` 自带 `/usr/bin/verge-mihomo`
+- 手动安装：把官方 release 解包后放到 `/usr/local/bin/mihomo` 或 `~/.local/bin/mihomo`
+
+> 手动下载后**必须** `chmod +x`（`curl -O` 与解压都不一定保留可执行位）。若忘了，界面会直接提示 `修复: chmod +x <路径>`。
+
+然后在页面里：
+
+1. 粘贴订阅链接或本地配置路径 → 点 **读取节点**
+2. 点 **开始测速**
+3. 设置筛选条件 → **预览配置** / **保存到文件** / **下载 YAML**
 
 ---
 
@@ -39,17 +69,25 @@ node src\server.mjs --open       # 启动并打开浏览器
 |------|------|------|
 | **① 界面按钮**（推荐） | 点右上角 **⏻** → 确认退出 | 会停掉测速、关闭 node 与 mihomo 内核，页面变成「已结束运行」 |
 | **② 终端** | 在启动它的窗口按 **Ctrl+C** | 同样会一并停止内核 |
-| **③ 双击 `停止.cmd`** | 不打开网页也能停 | 网页已关、终端找不到时的兜底方案 |
+| **③ 停止脚本** | Windows 双击 `停止.cmd`；Linux 执行 `./stop.sh` | 网页已关、终端找不到时的兜底方案 |
 
 命令行等价写法：
 
 ```powershell
+# Windows
 npm run stop                 # 请求关闭（走 HTTP 接口）
 .\停止.ps1                   # 同上，且会确认端口是否释放
 .\停止.ps1 -Force            # HTTP 不通时，直接结束进程
 ```
 
-`停止.ps1` 只会结束本工具的进程，**不会动你自己的 Clash Verge 内核**（按命令行参数区分）。
+```bash
+# Linux
+npm run stop                 # 请求关闭（走 HTTP 接口）
+./stop.sh                    # 同上，且会确认端口是否释放
+./stop.sh --force            # HTTP 不通时，按 PID / 工作目录兜底结束
+```
+
+停止脚本只会结束本工具的进程，**不会动你自己的 Clash Verge 内核**。识别依据是本工具独有的工作目录（记录在 PID 文件里），你的 Verge 内核用不同的工作目录启动，因此不会命中。
 
 > 小提示：**只是想暂时不用**，直接关掉网页标签就行——后台进程会继续运行，重新打开 http://127.0.0.1:8765 即可继续；只有确实不再需要时才用上面的方式彻底停掉。
 
@@ -82,10 +120,16 @@ mihomo 的 `listeners` 支持 `proxy: <节点名>`，把某个入站端口的流
 
 - 环境变量 `NODEPILOT_CORE` / `NODEPILOT_CORE_DIR`
 - 工具目录及其 `bin/`、`core/` 子目录
-- Windows：`Clash Verge` 安装目录、`%LOCALAPPDATA%\Programs`、`%APPDATA%`、scoop apps 等
+- **Windows**：`Clash Verge` 安装目录、`%LOCALAPPDATA%\Programs`、`%APPDATA%`、scoop apps 等
+- **Linux**：`/usr/local/bin`、`/usr/bin`、`/opt/mihomo`、`~/.local/bin`、`~/bin`、
+  `$XDG_DATA_HOME/io.github.clash-verge-rev.clash-verge-rev`
+  （不含 Flatpak/Snap/AppImage 路径：Clash Verge Rev 只发布 `.deb` / `.rpm`）
 - 系统的 `PATH`
 
 同名文件会优先选**稳定版**而不是 `-alpha` 版本。
+
+找不到内核时，界面会区分「没找到」与「找到了但跑不起来」，后者会直接给出修复方式。
+最常见的 Linux 情况是手动下载的内核缺少可执行位，此时提示 `修复: chmod +x <路径>`。
 
 ---
 
@@ -211,25 +255,46 @@ npm run test:all  # 全部
 测速是真的在下载数据。一轮「每节点 6 秒 × 15MB/s」≈ **每节点 90MB**，28 个节点就是 **2.5GB 左右**。所以测试**务必限制节点数**：
 
 ```powershell
+# Windows
 $env:NODEPILOT_TEST_SUB   = "D:\path\to\config.yaml"   # 或订阅 URL
 $env:NODEPILOT_TEST_LIMIT = "3"                        # 节点数上限（默认 3）
 npm run test:ui
+```
+
+```bash
+# Linux
+NODEPILOT_TEST_SUB=/path/to/config.yaml NODEPILOT_TEST_LIMIT=3 npm run test:ui
 ```
 
 界面里也有对应的 **「只读取前 N 个节点」** 输入框。日常手动测速同样建议先限量确认效果，再决定要不要全量跑。
 
 | 测试 | 覆盖内容 |
 |------|----------|
+| `tests/core-finder.test.mjs` | 内核探测：Linux 路径清单、EACCES/ENOENT 提示、**垃圾文件不得被误认为内核** |
+| `tests/proc.test.mjs` | 进程识别：`isOurCore` 的正反例（别的 workDir / 已死 PID / 自身 PID 均不命中） |
 | `tests/ruletest.test.mjs` | 14 条规则改写用例，含 `no-resolve` 后缀与 `AND/OR/NOT` 逻辑规则 |
 | `tests/safety.test.mjs` | 11 项：订阅失败 / 筛选为空时**绝不覆盖**已有结果文件 |
 | `tests/validate.test.mjs` | 用真实 mihomo `-t` 校验导出配置确实能加载 |
 | `tests/uitest.test.mjs` | 真实浏览器：加载订阅 → 测速 → 表格渲染 → 导出预览 |
 | `tests/unlock-ui.test.mjs` | 解锁检测全流程：勾选服务 → 检测 → 标签渲染 → 按解锁筛选/导出 |
 | `tests/unlock-chips.test.mjs` | 校验表格里每个解锁标签的颜色与后端数据**逐条一致**（防止界面说谎） |
-| `tests/shutdown.test.mjs` | 关闭后 **node 与 mihomo 内核都必须退出**、端口释放、且不影响你自己的 Clash Verge |
+| `tests/shutdown.test.mjs` | 关闭后 **node 与 mihomo 内核都必须退出**、端口释放、且不影响你自己的 Clash Verge（按平台分派：Linux 走 `/proc`，Windows 走 CIM） |
 | `tests/quit-ui.test.mjs` | 界面退出按钮：确认框 → 取消不退出 → 确认后后端真的停止 |
 
 全部用例通过后才是可发布状态。
+
+### Linux 冒烟测试（真实订阅）
+
+`tools/smoke-linux.sh` 在真实订阅上验证「拉取 → 分配端口 → 内核就绪 → 延时 → 极短下载」整条链路：
+
+```bash
+NODEPILOT_SMOKE_SUB="<订阅链接>" ./tools/smoke-linux.sh
+NODEPILOT_SMOKE_SUB="<订阅链接>" NODEPILOT_SMOKE_DOWNLOAD=0 ./tools/smoke-linux.sh   # 只测延时
+```
+
+流量刻意压到最小：先用 `maxLatencyMs=1` 使下载候选集为空、只收延时数据（每个节点一次 204 探测），
+再以实测最短延时为阈值，只对**最快那 1 个节点**做 2 秒下载。
+订阅链接只从 `NODEPILOT_SMOKE_SUB` 读取，未设置时脚本直接跳过（退出码 0），因此可以安全放进 CI。
 
 ---
 
@@ -241,13 +306,20 @@ clash-nodepilot/
 ├── 停止.cmd                 # Windows 双击停止（关网页后也能用）
 ├── run.ps1                  # PowerShell 启动脚本
 ├── 停止.ps1                 # PowerShell 停止脚本
+├── start.sh                 # Linux 启动脚本
+├── stop.sh                  # Linux 停止脚本
+├── .github/workflows/ci.yml # ubuntu + windows 双平台跑后端测试
+├── tools/
+│   └── smoke-linux.sh       # Linux 真实订阅冒烟（流量已最小化）
 ├── package.json
 ├── tests/                   # 见上方「测试」
 └── src/
     ├── server.mjs           # HTTP 服务 + JSON API + SSE
     ├── core/
-    │   ├── core-finder.mjs   # 探测本机 mihomo 内核
+    │   ├── core-finder.mjs   # 探测本机 mihomo 内核（区分「没有」与「不可执行」）
     │   ├── core-manager.mjs  # 生成配置、托管内核、分配端口
+    │   ├── proc.mjs          # 跨平台进程识别 / PID 文件
+    │   ├── stop.mjs          # 三层停止逻辑（HTTP → PID → 工作目录扫描）
     │   ├── subscription.mjs  # 订阅拉取与解析（含 proxy-providers）
     │   ├── tunnel.mjs        # CONNECT 隧道 + 计时/计速（零依赖）
     │   ├── engine.mjs        # 测速流程编排
@@ -269,8 +341,31 @@ clash-nodepilot/
 | 变量 | 说明 |
 |------|------|
 | `NODEPILOT_PORT` | 服务端口（默认 8765） |
-| `NODEPILOT_CORE` | 直接指定内核 exe 路径 |
+| `NODEPILOT_CORE` | 直接指定内核路径 |
 | `NODEPILOT_CORE_DIR` | 额外搜索内核的目录 |
+| `NODEPILOT_SMOKE_SUB` | `tools/smoke-linux.sh` 用的订阅地址（未设置则跳过冒烟） |
+| `NODEPILOT_SMOKE_NODES` | 冒烟时读取的节点数上限（默认 3） |
+| `NODEPILOT_SMOKE_DOWNLOAD` | 设为 `0` 时冒烟只测延时、完全不下载 |
+| `NODEPILOT_TEST_SUB` / `NODEPILOT_TEST_LIMIT` | UI 测试用的订阅与节点上限 |
+
+---
+
+## 变更说明
+
+### 1.1.0
+
+- **Linux 正式支持**：新增 `start.sh` / `stop.sh`，内核探测补齐 Linux 真实安装路径，
+  找不到时区分「没有内核」与「有但不可执行」并提示 `chmod +x`
+- 新增跨平台进程层：停止时按 HTTP → PID 文件 → 工作目录扫描三层处理，并显式验证 PID，
+  确保只结束本工具的进程
+- `shutdown` 测试改为平台分派（此前在 Linux 会因调用 PowerShell 而崩掉整个测试套件），
+  新增内核探测与进程识别单测
+- 新增 CI：`ubuntu-latest` + `windows-latest` 跑后端测试
+- 新增 `tools/smoke-linux.sh` 真实订阅冒烟脚本
+
+### 1.0.0
+
+- 首个版本：Clash / Mihomo 节点测速与筛选，本地 Web UI
 
 ---
 
@@ -279,6 +374,7 @@ clash-nodepilot/
 - 测速会占用真实带宽，注意流量。
 - 若同时运行 Clash Verge 等代理软件，**TUN 模式可能接管系统流量**，影响"直连"类参考值（但不影响经节点端口的测量）。
 - 测速端点在中国大陆的可达性会随时间变化，可在「高级设置」里换成你信任的地址。
+- Linux 上本工具**不会**下载任何内核；请自行安装 mihomo（见上方「Linux」一节）。
 
 ## License
 

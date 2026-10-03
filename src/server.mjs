@@ -6,8 +6,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import { spawn, execFileSync } from 'node:child_process';
-import { findCore, verifyCore } from './core/core-finder.mjs';
+import { findCore, verifyCore, verifyCoreDetailed } from './core/core-finder.mjs';
 import { CoreManager } from './core/core-manager.mjs';
+import { writePidFile, removePidFile, defaultBaseDir } from './core/proc.mjs';
 import { loadProxies, SubscriptionError } from './core/subscription.mjs';
 import { SpeedTestEngine, DEFAULT_CONFIG, applyFilters } from './core/engine.mjs';
 import { UNLOCK_SERVICES } from './core/unlock.mjs';
@@ -146,20 +147,31 @@ async function handleApi(req, res, url) {
       const explicit = body.path ? String(body.path) : undefined;
 
       if (explicit) {
-        const ok = await verifyCore(explicit);
-        if (!ok) return json(res, 400, { error: `该文件无法执行或不是 mihomo 核心: ${explicit}` });
-        state.coreInfo = ok;
+        const ok = await verifyCoreDetailed(explicit);
+        if (!ok.path) {
+          return json(res, 400, {
+            error: ok.hint || `该文件无法执行或不是 mihomo 核心: ${explicit}`,
+            code: ok.code || null,
+          });
+        }
+        state.coreInfo = { path: ok.path, version: ok.version };
         state.core = new CoreManager({ binPath: ok.path });
         state.coreError = null;
         pushLog(`已指定内核: ${ok.path}`);
-        return json(res, 200, { coreInfo: ok });
+        return json(res, 200, { coreInfo: { path: ok.path, version: ok.version } });
       }
 
       const found = await findCore();
       if (!found.path) {
         state.coreError = '未找到 mihomo/clash 核心';
+        // Surface the most informative reason among the candidates tried: a
+        // file that exists but cannot execute is far more actionable than a
+        // plain "not found".
+        const best = (found.tried || []).find((t) => t.hint);
         return json(res, 404, {
-          error: '未找到可用的 mihomo 核心。请指定路径，或将 mihomo.exe 放到工具目录。',
+          error: best?.hint
+            ? `找到内核文件但无法使用。\n${best.hint}`
+            : `未找到可用的 mihomo 核心。请指定路径，或将内核二进制放到工具目录。`,
           tried: (found.tried || []).slice(0, 15),
         });
       }
@@ -291,6 +303,18 @@ async function handleApi(req, res, url) {
     // Let the response flush before tearing down the listener.
     setTimeout(() => { void shutdownGracefully('api'); }, 250);
     return undefined;
+  }
+
+  // --- stop just the core (force path for stop.sh when /shutdown is unusable) ---
+  if (p === '/stop-core' && method === 'POST') {
+    try {
+      if (state.core) await state.core.stop();
+      state.portMap = new Map();
+      pushLog('已通过接口停止内核');
+      return json(res, 200, { stopped: true });
+    } catch (err) {
+      return json(res, 500, { error: err.message });
+    }
   }
 
   if (p === '/results' && method === 'GET') {
@@ -524,6 +548,31 @@ function browserCandidates() {
   return out.filter(Boolean);
 }
 
+/**
+ * Resolve an executable the way a shell would: an absolute/relative path if it
+ * contains a separator, otherwise a PATH lookup. Returns the path or null.
+ */
+function whichSync(cmd) {
+  if (!cmd) return null;
+  if (cmd.includes('/') || cmd.includes('\\')) {
+    try { return fsSync.accessSync(cmd, fsSync.constants.X_OK) === undefined ? cmd : null; } catch { return null; }
+  }
+  const exts = process.platform === 'win32'
+    ? (process.env.PATHEXT || '.EXE').split(';')
+    : [''];
+  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+    if (!dir) continue;
+    for (const ext of exts) {
+      const full = path.join(dir, cmd + ext.toLowerCase());
+      try {
+        fsSync.accessSync(full, fsSync.constants.X_OK);
+        return full;
+      } catch { /* keep looking */ }
+    }
+  }
+  return null;
+}
+
 function openBrowser(url) {
   try {
     if (process.platform === 'win32') {
@@ -541,7 +590,30 @@ function openBrowser(url) {
       spawn('open', [url], { detached: true, stdio: 'ignore' }).unref();
       return true;
     }
-    spawn('xdg-open', [url], { detached: true, stdio: 'ignore' }).unref();
+
+    // Linux/BSD.
+    //
+    // `spawn` reports ENOENT asynchronously, so an earlier version that simply
+    // fired xdg-open and returned true claimed success even on a headless box
+    // or a container with no xdg-utils. Check first, then report honestly.
+    const hasDisplay = !!(process.env.DISPLAY || process.env.WAYLAND_DISPLAY);
+    if (!hasDisplay) return false;
+
+    // $BROWSER takes precedence when it names a runnable program. (xdg-open
+    // honours $BROWSER itself, but checking here lets a broken value fall
+    // through to xdg-open instead of failing silently.)
+    const browserEnv = (process.env.BROWSER || '').trim();
+    if (browserEnv) {
+      const [cmd, ...args] = browserEnv.split(/\s+/);
+      if (cmd && whichSync(cmd)) {
+        spawn(cmd, [...args, url], { detached: true, stdio: 'ignore' }).unref();
+        return true;
+      }
+    }
+
+    const opener = whichSync('xdg-open');
+    if (!opener) return false;
+    spawn(opener, [url], { detached: true, stdio: 'ignore' }).unref();
     return true;
   } catch {
     return false;
@@ -565,14 +637,45 @@ export async function startServer(opts = {}) {
     state.coreError = err.message;
   }
 
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(port, host, resolve);
+  // Record the PID file BEFORE listening.
+  //
+  // `server.listen()` begins accepting connections at the syscall, which can
+  // precede the 'listening' callback that resolves this promise. Writing the
+  // file there still left a (small) window in which a client could be served
+  // while the record did not exist yet; a test polling /api/status right after
+  // startup read null on loaded CI runners. Writing it before the socket is
+  // bound removes the ordering question entirely.
+  //
+  // The port is always concrete here (defaults to 8765, never 0), so it can be
+  // recorded up front. If the bind later fails we drop the record again.
+  const baseDir = defaultBaseDir();
+  writePidFile(baseDir, {
+    serverPid: process.pid,
+    port,
+    host,
+    url: `http://${host}:${port}`,
+    platform: process.platform,
   });
 
-  const actual = server.address().port;
-  const url = `http://${host}:${actual}`;
-  return { url, port: actual, server };
+  let actual;
+  try {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(port, host, resolve);
+    });
+  } catch (err) {
+    // Do not leave a PID file pointing at an instance that never came up.
+    removePidFile(baseDir);
+    throw err;
+  }
+
+  actual = server.address().port;
+  if (actual !== port) {
+    // Only possible for dynamic ports; keep the record truthful.
+    writePidFile(baseDir, { port: actual, url: `http://${host}:${actual}` });
+  }
+
+  return { url: `http://${host}:${actual}`, port: actual, server };
 }
 
 /**
@@ -600,6 +703,7 @@ async function shutdownGracefully(reason = 'signal') {
     setTimeout(resolve, 1200);
   });
 
+  removePidFile(defaultBaseDir());
   console.log('  已退出');
   process.exit(0);
 }
@@ -616,7 +720,12 @@ if (isMain) {
       console.log('');
       console.log('  结束运行：点界面右上角「⏻ 关闭」，或在此终端按 Ctrl+C');
       console.log('');
-      if (wantOpen) openBrowser(url);
+      if (wantOpen && !openBrowser(url)) {
+        // Say so instead of leaving the user waiting for a window that never
+        // appears (headless shell, missing xdg-utils, no DISPLAY).
+        console.log('  ⚠️ 未能自动打开浏览器，请手动访问上面的地址');
+        console.log('');
+      }
     })
     .catch((err) => {
       console.error('启动失败:', err.message);

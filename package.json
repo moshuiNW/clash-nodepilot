@@ -1,6 +1,6 @@
 {
   "name": "clash-nodepilot",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "Clash/Mihomo 节点测速与筛选工具 — 本地 Web UI",
   "type": "module",
@@ -11,9 +11,10 @@
     "start": "node src/server.mjs",
     "dev": "node src/server.mjs --open",
     "stop": "node -e \"fetch('http://127.0.0.1:8765/api/shutdown',{method:'POST'}).then(()=>console.log('已发送关闭请求')).catch(()=>console.log('服务未在运行'))\"",
-    "test": "node tests/ruletest.test.mjs && node tests/safety.test.mjs && node tests/validate.test.mjs && node tests/shutdown.test.mjs",
+    "test": "node tests/core-finder.test.mjs && node tests/proc.test.mjs && node tests/ruletest.test.mjs && node tests/safety.test.mjs && node tests/validate.test.mjs && node tests/shutdown.test.mjs",
     "test:ui": "node tests/uitest.test.mjs && node tests/quit-ui.test.mjs && node tests/unlock-ui.test.mjs && node tests/unlock-chips.test.mjs",
-    "test:all": "npm test && npm run test:ui"
+    "test:all": "npm test && npm run test:ui",
+    "smoke:linux": "bash tools/smoke-linux.sh"
   },
   "dependencies": {
     "js-yaml": "^4.3.2"
