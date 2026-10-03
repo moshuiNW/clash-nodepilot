@@ -637,25 +637,41 @@ export async function startServer(opts = {}) {
     state.coreError = err.message;
   }
 
+  // Write the PID file *inside* the listen callback, before resolving.
+  //
+  // The server starts accepting connections as soon as listen succeeds, so
+  // writing this after an `await` left a window where a client could already
+  // get an HTTP response while the PID file did not exist yet. Tests read the
+  // file right after polling /api/status and intermittently saw null on loaded
+  // CI runners, where the event loop delay widens that window; on a fast local
+  // machine it never showed up. Recording it before any request can be served
+  // removes the race entirely.
+  let recorded = null;
   await new Promise((resolve, reject) => {
     server.once('error', reject);
-    server.listen(port, host, resolve);
+    server.listen(port, host, () => {
+      const boundPort = server.address().port;
+      const boundUrl = `http://${host}:${boundPort}`;
+
+      // Record how to find this instance again after the browser tab is closed,
+      // so stop.sh can shut it down cooperatively instead of scanning for
+      // processes. Failing to write it is not fatal to serving requests.
+      try {
+        writePidFile(defaultBaseDir(), {
+          serverPid: process.pid,
+          port: boundPort,
+          host,
+          url: boundUrl,
+          platform: process.platform,
+        });
+      } catch { /* non-fatal */ }
+
+      recorded = { port: boundPort, url: boundUrl };
+      resolve();
+    });
   });
 
-  const actual = server.address().port;
-  const url = `http://${host}:${actual}`;
-
-  // Record how to find this instance again after the browser tab is closed, so
-  // stop.sh can shut it down cooperatively instead of scanning for processes.
-  writePidFile(defaultBaseDir(), {
-    serverPid: process.pid,
-    port: actual,
-    host,
-    url,
-    platform: process.platform,
-  });
-
-  return { url, port: actual, server };
+  return { url: recorded.url, port: recorded.port, server };
 }
 
 /**
