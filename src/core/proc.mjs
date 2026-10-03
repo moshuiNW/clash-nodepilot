@@ -80,7 +80,13 @@ export function pidAlive(pid) {
   }
 }
 
-/** Command line of a pid, or null. Linux reads /proc; Windows is unsupported. */
+/**
+ * Command line of a pid, or null when it cannot be determined.
+ *
+ * Linux reads /proc. Windows asks CIM through PowerShell; that call costs about
+ * a second, so code inspecting many pids should use scanProcesses(), which
+ * resolves the whole list in one query instead.
+ */
 export function readCmdline(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return null;
   if (isLinux) {
@@ -92,7 +98,47 @@ export function readCmdline(pid) {
       return null;
     }
   }
+  if (isWin) {
+    try {
+      const ps =
+        `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${pid}";` +
+        'if ($p -and $p.CommandLine) { [Console]::Out.Write($p.CommandLine) }';
+      const raw = execFileSync('powershell', ['-NoProfile', '-Command', ps], {
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 15000,
+      }).trim();
+      return raw || null;
+    } catch {
+      return null;
+    }
+  }
   return null;
+}
+
+/**
+ * Split a command line into tokens, honouring double quotes.
+ *
+ * Needed because Windows paths contain spaces (`C:\Program Files\...`), and the
+ * naive `split(' ')` would cut `-d "C:\...\nodepilot\core"` into pieces and miss
+ * the match. Quotes are stripped from the resulting token.
+ */
+export function splitCmdline(cmd) {
+  const out = [];
+  let cur = '';
+  let quoted = false;
+  let has = false;
+  for (const ch of String(cmd || '')) {
+    if (ch === '"') { quoted = !quoted; has = true; continue; }
+    if (!quoted && /\s/.test(ch)) {
+      if (has) { out.push(cur); cur = ''; has = false; }
+      continue;
+    }
+    cur += ch;
+    has = true;
+  }
+  if (has) out.push(cur);
+  return out;
 }
 
 /**
@@ -108,7 +154,7 @@ export function isOurCore(pid, workDir) {
   const cmd = readCmdline(pid);
   if (!cmd) return false;
   const want = norm(workDir);
-  const argv = cmd.split(' ');
+  const argv = splitCmdline(cmd);
   for (let i = 0; i < argv.length; i++) {
     // Match `-d <dir>`, `--dir <dir>` and `-d=<dir>` forms.
     let candidate = null;

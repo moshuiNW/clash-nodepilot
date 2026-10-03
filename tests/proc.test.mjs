@@ -13,6 +13,7 @@ import {
   readCmdline,
   isOurCore,
   findOurCore,
+  splitCmdline,
   writePidFile,
   readPidFile,
   removePidFile,
@@ -106,8 +107,40 @@ if (IS_LINUX) {
   check('isOurCore: 死进程不命中', isOurCore(childPid, coreDir) === false);
 }
 
-// --- defaultBaseDir is stable and absolute ---
-check('defaultBaseDir 为绝对路径', path.isAbsolute(defaultBaseDir()));
+// --- splitCmdline: platform-independent, and the reason Windows paths with
+//     spaces work. These run on both CI legs. ---
+{
+  check('splitCmdline 普通参数', JSON.stringify(splitCmdline('mihomo -d /a/b')) === JSON.stringify(['mihomo', '-d', '/a/b']),
+    JSON.stringify(splitCmdline('mihomo -d /a/b')));
+  check('splitCmdline 去掉引号并保留空格',
+    JSON.stringify(splitCmdline('mihomo.exe -d "C:\\Program Files\\np\\core"')) ===
+      JSON.stringify(['mihomo.exe', '-d', 'C:\\Program Files\\np\\core']),
+    JSON.stringify(splitCmdline('mihomo.exe -d "C:\\Program Files\\np\\core"')));
+  check('splitCmdline 处理多余空白',
+    JSON.stringify(splitCmdline('  a   b  ')) === JSON.stringify(['a', 'b']),
+    JSON.stringify(splitCmdline('  a   b  ')));
+  check('splitCmdline 空串', JSON.stringify(splitCmdline('')) === JSON.stringify([]));
+  check('splitCmdline 单引号不特殊处理（与 Windows 命令行一致）',
+    JSON.stringify(splitCmdline("a 'b c'")) === JSON.stringify(['a', "'b", "c'"]),
+    JSON.stringify(splitCmdline("a 'b c'")));
+}
+
+// --- isOurCore argument parsing is independent of the running platform: feed
+//     it cmdline shapes rather than real pids, so the Windows form is covered
+//     even when the suite runs on Linux. ---
+{
+  // `-d <dir>` with a quoted path containing spaces (Windows form).
+  const winCmd = 'C:\\Tools\\mihomo.exe -d "C:\\Users\\me\\AppData\\Local\\Temp\\nodepilot\\core"';
+  const winDir = 'C:\\Users\\me\\AppData\\Local\\Temp\\nodepilot\\core';
+  // isOurCore re-reads the real process, so exercise the parsing helpers the
+  // same way isOurCore does.
+  const argv = splitCmdline(winCmd);
+  const idx = argv.indexOf('-d');
+  check('Windows 带空格的 -d 路径能被解析出', idx >= 0 && argv[idx + 1] === winDir,
+    JSON.stringify(argv));
+}
+
+// --- defaultBaseDir is stable and absolute ---check('defaultBaseDir 为绝对路径', path.isAbsolute(defaultBaseDir()));
 check('defaultBaseDir 以 nodepilot 结尾', defaultBaseDir().endsWith('nodepilot'), defaultBaseDir());
 
 fs.rmSync(tmpBase, { recursive: true, force: true });
