@@ -548,6 +548,31 @@ function browserCandidates() {
   return out.filter(Boolean);
 }
 
+/**
+ * Resolve an executable the way a shell would: an absolute/relative path if it
+ * contains a separator, otherwise a PATH lookup. Returns the path or null.
+ */
+function whichSync(cmd) {
+  if (!cmd) return null;
+  if (cmd.includes('/') || cmd.includes('\\')) {
+    try { return fsSync.accessSync(cmd, fsSync.constants.X_OK) === undefined ? cmd : null; } catch { return null; }
+  }
+  const exts = process.platform === 'win32'
+    ? (process.env.PATHEXT || '.EXE').split(';')
+    : [''];
+  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+    if (!dir) continue;
+    for (const ext of exts) {
+      const full = path.join(dir, cmd + ext.toLowerCase());
+      try {
+        fsSync.accessSync(full, fsSync.constants.X_OK);
+        return full;
+      } catch { /* keep looking */ }
+    }
+  }
+  return null;
+}
+
 function openBrowser(url) {
   try {
     if (process.platform === 'win32') {
@@ -565,7 +590,30 @@ function openBrowser(url) {
       spawn('open', [url], { detached: true, stdio: 'ignore' }).unref();
       return true;
     }
-    spawn('xdg-open', [url], { detached: true, stdio: 'ignore' }).unref();
+
+    // Linux/BSD.
+    //
+    // `spawn` reports ENOENT asynchronously, so an earlier version that simply
+    // fired xdg-open and returned true claimed success even on a headless box
+    // or a container with no xdg-utils. Check first, then report honestly.
+    const hasDisplay = !!(process.env.DISPLAY || process.env.WAYLAND_DISPLAY);
+    if (!hasDisplay) return false;
+
+    // $BROWSER takes precedence when it names a runnable program. (xdg-open
+    // honours $BROWSER itself, but checking here lets a broken value fall
+    // through to xdg-open instead of failing silently.)
+    const browserEnv = (process.env.BROWSER || '').trim();
+    if (browserEnv) {
+      const [cmd, ...args] = browserEnv.split(/\s+/);
+      if (cmd && whichSync(cmd)) {
+        spawn(cmd, [...args, url], { detached: true, stdio: 'ignore' }).unref();
+        return true;
+      }
+    }
+
+    const opener = whichSync('xdg-open');
+    if (!opener) return false;
+    spawn(opener, [url], { detached: true, stdio: 'ignore' }).unref();
     return true;
   } catch {
     return false;
@@ -652,7 +700,12 @@ if (isMain) {
       console.log('');
       console.log('  结束运行：点界面右上角「⏻ 关闭」，或在此终端按 Ctrl+C');
       console.log('');
-      if (wantOpen) openBrowser(url);
+      if (wantOpen && !openBrowser(url)) {
+        // Say so instead of leaving the user waiting for a window that never
+        // appears (headless shell, missing xdg-utils, no DISPLAY).
+        console.log('  ⚠️ 未能自动打开浏览器，请手动访问上面的地址');
+        console.log('');
+      }
     })
     .catch((err) => {
       console.error('启动失败:', err.message);
