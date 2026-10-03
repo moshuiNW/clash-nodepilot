@@ -17,6 +17,46 @@ const CANDIDATE_NAMES = [
   `mihomo-windows-amd64${EXE}`,
 ];
 
+/**
+ * XDG data dir Clash Verge Rev uses on Linux. It holds the running core's
+ * control socket (`verge-mihomo.sock`) rather than a second copy of the binary,
+ * but the directory is still scanned: a user who unpacks a release into it gets
+ * picked up, and a socket can never match a candidate name.
+ */
+const VERGE_REV_DATA = 'io.github.clash-verge-rev.clash-verge-rev';
+
+/**
+ * Turn an execFile failure code into an actionable, platform-accurate hint.
+ *
+ * The common Linux failure is a manually downloaded release whose executable
+ * bit was lost (unzip/gzip does not always preserve it, and `curl -O` never
+ * sets it), which surfaces as EACCES. Reporting "not a valid core" for that
+ * sends the user in circles; naming the exact fix does not.
+ */
+export function coreFailureHint(code, binPath) {
+  switch (code) {
+    case 'EACCES':
+      return isWin
+        ? `文件存在但无法执行（权限不足）: ${binPath}`
+        : `文件存在但没有可执行权限: ${binPath}\n修复: chmod +x ${binPath}`;
+    case 'ENOEXEC':
+      return `文件不是可执行程序（可能下载的是压缩包，或 CPU 架构不匹配）: ${binPath}`;
+    case 'EPARSE':
+      return `文件能运行但不像 mihomo 内核（-v 未正常输出版本，可能下错文件或架构不匹配）: ${binPath}`;
+    case 'ENOENT':
+      return `文件不存在: ${binPath}`;
+    case 'ETIMEDOUT':
+      return `执行超时，文件可能挂起: ${binPath}`;
+    default:
+      // 127 is the shell's "command not found" after Linux's execvp fallback to
+      // /bin/sh for a shebang-less file; 126 is "found but not executable".
+      if (code === 127) return `文件不是有效的 mihomo 内核（执行失败）: ${binPath}`;
+      if (code === 126) return `文件无法执行，请检查权限与架构: ${binPath}`;
+      if (code) return `内核启动失败（退出码 ${code}）: ${binPath}`;
+      return `无法执行: ${binPath}`;
+  }
+}
+
 /** Directories worth scanning for an existing core. */
 function candidateDirs() {
   const home = os.homedir();
@@ -47,11 +87,20 @@ function candidateDirs() {
       'C:\\User_Tools\\Clash Verge'
     );
   } else {
+    // Linux / BSD paths verified against real installs:
+    //  - Fedora's `clash-meta` rpm drops /usr/bin/mihomo and /usr/bin/clash-meta
+    //  - Arch/AUR `mihomo` does the same; manual installs land in /usr/local/bin
+    //  - Clash Verge Rev's .deb/.rpm ships /usr/bin/verge-mihomo
+    //  - a `tar -xzf` into the data dir is a common manual install
+    const xdgData = process.env.XDG_DATA_HOME || path.join(home, '.local', 'share');
     dirs.push(
       '/usr/local/bin',
       '/usr/bin',
+      '/opt/mihomo',
       '/opt/homebrew/bin',
       path.join(home, '.local', 'bin'),
+      path.join(home, 'bin'),
+      path.join(xdgData, VERGE_REV_DATA),
       path.join(home, '.config', 'clash-verge')
     );
   }
@@ -91,11 +140,21 @@ function scanDir(dir, depth, out, seen) {
   }
 }
 
-function runVersion(binPath) {
+function runVersion(binPath, failure) {
   return new Promise((resolve) => {
     execFile(binPath, ['-v'], { timeout: 8000, windowsHide: true }, (err, stdout, stderr) => {
-      if (err && !stdout && !stderr) return resolve(null);
       const text = `${stdout || ''}${stderr || ''}`.trim();
+      if (err) {
+        // A non-zero exit means this is not a working core, even if it printed
+        // something. This matters on Linux specifically: execvp falls back to
+        // /bin/sh for a file with no shebang, so an arbitrary text file marked
+        // executable "runs" and echoes a shell error ("line 1: not: command not
+        // found") while exiting 127. Treating any output as success let such a
+        // file masquerade as a core. A real mihomo exits 0 for `-v`.
+        if (failure && (err.code || !text)) failure.code = err.code || 'EPARSE';
+        else if (failure && text) failure.code = 'EPARSE';
+        return resolve(null);
+      }
       resolve(text || null);
     });
   });
@@ -153,8 +212,14 @@ export async function findCore(explicit) {
       continue;
     }
 
-    const version = await runVersion(candidate);
-    tried.push({ path: candidate, version });
+    const failure = {};
+    const version = await runVersion(candidate, failure);
+    tried.push({
+      path: candidate,
+      version,
+      code: failure.code || null,
+      hint: version ? null : coreFailureHint(failure.code, candidate),
+    });
     if (version) {
       return { path: candidate, version };
     }
@@ -165,6 +230,15 @@ export async function findCore(explicit) {
 
 /** Verify a specific binary path works. */
 export async function verifyCore(binPath) {
-  const version = await runVersion(binPath);
+  const failure = {};
+  const version = await runVersion(binPath, failure);
   return version ? { path: binPath, version } : null;
+}
+
+/** Verify a path and, on failure, explain precisely why. */
+export async function verifyCoreDetailed(binPath) {
+  const failure = {};
+  const version = await runVersion(binPath, failure);
+  if (version) return { path: binPath, version };
+  return { path: null, version: null, code: failure.code || null, hint: coreFailureHint(failure.code, binPath) };
 }

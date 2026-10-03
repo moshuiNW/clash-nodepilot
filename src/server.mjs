@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import { spawn, execFileSync } from 'node:child_process';
-import { findCore, verifyCore } from './core/core-finder.mjs';
+import { findCore, verifyCore, verifyCoreDetailed } from './core/core-finder.mjs';
 import { CoreManager } from './core/core-manager.mjs';
 import { loadProxies, SubscriptionError } from './core/subscription.mjs';
 import { SpeedTestEngine, DEFAULT_CONFIG, applyFilters } from './core/engine.mjs';
@@ -146,20 +146,31 @@ async function handleApi(req, res, url) {
       const explicit = body.path ? String(body.path) : undefined;
 
       if (explicit) {
-        const ok = await verifyCore(explicit);
-        if (!ok) return json(res, 400, { error: `该文件无法执行或不是 mihomo 核心: ${explicit}` });
-        state.coreInfo = ok;
+        const ok = await verifyCoreDetailed(explicit);
+        if (!ok.path) {
+          return json(res, 400, {
+            error: ok.hint || `该文件无法执行或不是 mihomo 核心: ${explicit}`,
+            code: ok.code || null,
+          });
+        }
+        state.coreInfo = { path: ok.path, version: ok.version };
         state.core = new CoreManager({ binPath: ok.path });
         state.coreError = null;
         pushLog(`已指定内核: ${ok.path}`);
-        return json(res, 200, { coreInfo: ok });
+        return json(res, 200, { coreInfo: { path: ok.path, version: ok.version } });
       }
 
       const found = await findCore();
       if (!found.path) {
         state.coreError = '未找到 mihomo/clash 核心';
+        // Surface the most informative reason among the candidates tried: a
+        // file that exists but cannot execute is far more actionable than a
+        // plain "not found".
+        const best = (found.tried || []).find((t) => t.hint);
         return json(res, 404, {
-          error: '未找到可用的 mihomo 核心。请指定路径，或将 mihomo.exe 放到工具目录。',
+          error: best?.hint
+            ? `找到内核文件但无法使用。\n${best.hint}`
+            : `未找到可用的 mihomo 核心。请指定路径，或将内核二进制放到工具目录。`,
           tried: (found.tried || []).slice(0, 15),
         });
       }
