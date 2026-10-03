@@ -8,7 +8,7 @@ const isWin = process.platform === 'win32';
 const EXE = isWin ? '.exe' : '';
 
 /** Candidate file names, most-preferred first. */
-const CANDIDATE_NAMES = [
+export const CANDIDATE_NAMES = [
   `mihomo${EXE}`,
   `verge-mihomo${EXE}`,
   `verge-mihomo-alpha${EXE}`,
@@ -87,24 +87,32 @@ function candidateDirs() {
       'C:\\User_Tools\\Clash Verge'
     );
   } else {
-    // Linux / BSD paths verified against real installs:
-    //  - Fedora's `clash-meta` rpm drops /usr/bin/mihomo and /usr/bin/clash-meta
-    //  - Arch/AUR `mihomo` does the same; manual installs land in /usr/local/bin
-    //  - Clash Verge Rev's .deb/.rpm ships /usr/bin/verge-mihomo
-    //  - a `tar -xzf` into the data dir is a common manual install
-    const xdgData = process.env.XDG_DATA_HOME || path.join(home, '.local', 'share');
-    dirs.push(
-      '/usr/local/bin',
-      '/usr/bin',
-      '/opt/mihomo',
-      '/opt/homebrew/bin',
-      path.join(home, '.local', 'bin'),
-      path.join(home, 'bin'),
-      path.join(xdgData, VERGE_REV_DATA),
-      path.join(home, '.config', 'clash-verge')
-    );
+    dirs.push(...linuxCandidateDirs());
   }
   return [...new Set(dirs)];
+}
+
+/**
+ * The Linux/BSD part of the candidate list, exposed for tests.
+ *
+ * Deliberately excludes Flatpak/Snap/AppImage locations: Clash Verge Rev ships
+ * .deb and .rpm only (the maintainers declined the sandboxed packaging formats
+ * because they break the app's privileges), so a `~/.var/app/...` candidate
+ * would be dead code that never matches a real installation.
+ */
+export function linuxCandidateDirs() {
+  const home = os.homedir();
+  const xdgData = process.env.XDG_DATA_HOME || path.join(home, '.local', 'share');
+  return [
+    '/usr/local/bin',
+    '/usr/bin',
+    '/opt/mihomo',
+    '/opt/homebrew/bin',
+    path.join(home, '.local', 'bin'),
+    path.join(home, 'bin'),
+    path.join(xdgData, VERGE_REV_DATA),
+    path.join(home, '.config', 'clash-verge'),
+  ];
 }
 
 /** Recursively look for candidate names, bounded in depth and breadth. */
