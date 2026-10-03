@@ -1,0 +1,75 @@
+name: CI
+
+# Backend tests on both supported platforms.
+#
+# The UI tests (npm run test:ui) are deliberately NOT run here: they need
+# Playwright browsers plus OS dependencies, which makes CI slow and flaky for
+# little extra signal. Run them locally with `npm run test:all`.
+#
+# The shutdown test actually starts the server and lets it spawn a mihomo core,
+# so a core must exist on the runner. GitHub images ship none, hence the
+# explicit download below. It is placed in the repo root, which the core finder
+# scans (process.cwd() is one of its candidate dirs).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install runtime dependency
+        run: npm install js-yaml --no-save --no-audit --no-fund
+
+      - name: Fetch a mihomo core (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # `compatible` build avoids AVX requirements on older runners.
+          url="https://github.com/MetaCubeX/mihomo/releases/download/v1.19.32/mihomo-linux-amd64-compatible-v1.19.32.gz"
+          curl -fsSL "$url" -o mihomo.gz
+          gunzip -f mihomo.gz
+          chmod +x mihomo
+          ./mihomo -v
+
+      - name: Fetch a mihomo core (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $url = 'https://github.com/MetaCubeX/mihomo/releases/download/v1.19.32/mihomo-windows-amd64-compatible-v1.19.32.zip'
+          Invoke-WebRequest -Uri $url -OutFile mihomo.zip
+          Expand-Archive -Path mihomo.zip -DestinationPath . -Force
+          # The release zip contains the binary already named mihomo.exe.
+          Get-ChildItem -Recurse -Filter 'mihomo*.exe' | Select-Object -First 1 | ForEach-Object {
+            Copy-Item $_.FullName -Destination 'mihomo.exe' -Force
+          }
+          .\mihomo.exe -v
+
+      - name: Run backend tests
+        shell: bash
+        run: npm test
+
+      - name: Smoke script self-check (no subscription -> must skip cleanly)
+        shell: bash
+        # Proves the skip path works, i.e. a missing subscription is not a failure.
+        run: bash tools/smoke-linux.sh
