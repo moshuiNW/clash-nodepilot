@@ -8,6 +8,7 @@ import os from 'node:os';
 import { spawn, execFileSync } from 'node:child_process';
 import { findCore, verifyCore, verifyCoreDetailed } from './core/core-finder.mjs';
 import { CoreManager } from './core/core-manager.mjs';
+import { writePidFile, removePidFile, defaultBaseDir } from './core/proc.mjs';
 import { loadProxies, SubscriptionError } from './core/subscription.mjs';
 import { SpeedTestEngine, DEFAULT_CONFIG, applyFilters } from './core/engine.mjs';
 import { UNLOCK_SERVICES } from './core/unlock.mjs';
@@ -304,6 +305,18 @@ async function handleApi(req, res, url) {
     return undefined;
   }
 
+  // --- stop just the core (force path for stop.sh when /shutdown is unusable) ---
+  if (p === '/stop-core' && method === 'POST') {
+    try {
+      if (state.core) await state.core.stop();
+      state.portMap = new Map();
+      pushLog('已通过接口停止内核');
+      return json(res, 200, { stopped: true });
+    } catch (err) {
+      return json(res, 500, { error: err.message });
+    }
+  }
+
   if (p === '/results' && method === 'GET') {
     const snap = summarizeResults();
     const filters = Object.fromEntries(url.searchParams.entries());
@@ -583,6 +596,17 @@ export async function startServer(opts = {}) {
 
   const actual = server.address().port;
   const url = `http://${host}:${actual}`;
+
+  // Record how to find this instance again after the browser tab is closed, so
+  // stop.sh can shut it down cooperatively instead of scanning for processes.
+  writePidFile(defaultBaseDir(), {
+    serverPid: process.pid,
+    port: actual,
+    host,
+    url,
+    platform: process.platform,
+  });
+
   return { url, port: actual, server };
 }
 
@@ -611,6 +635,7 @@ async function shutdownGracefully(reason = 'signal') {
     setTimeout(resolve, 1200);
   });
 
+  removePidFile(defaultBaseDir());
   console.log('  已退出');
   process.exit(0);
 }

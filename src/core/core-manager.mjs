@@ -7,6 +7,7 @@ import net from 'node:net';
 import { spawn, execFile } from 'node:child_process';
 import yaml from 'js-yaml';
 import { sleep } from './util.mjs';
+import { writePidFile, removePidFile } from './proc.mjs';
 
 const isWin = process.platform === 'win32';
 
@@ -162,6 +163,14 @@ export class CoreManager {
       windowsHide: true,
     });
 
+    // Record the core pid next to this tool's work dir. The stop path verifies
+    // the pid still points at *this* work dir before signalling, so a recycled
+    // pid can never lead to killing an unrelated process (e.g. the user's own
+    // Clash Verge core).
+    if (this.proc.pid) {
+      writePidFile(this.baseDir, { corePid: this.proc.pid, workDir: this.workDir });
+    }
+
     const onChunk = (buf) => {
       const text = buf.toString();
       logStream.write(text);
@@ -273,7 +282,10 @@ export class CoreManager {
   }
 
   async stop() {
-    if (!this.proc) return;
+    if (!this.proc) {
+      removePidFile(this.baseDir);
+      return;
+    }
     const proc = this.proc;
     this.proc = null;
     try {
@@ -290,5 +302,6 @@ export class CoreManager {
       try { proc.kill('SIGKILL'); } catch { /* ignore */ }
     }
     this.started = false;
+    removePidFile(this.baseDir);
   }
 }
